@@ -186,7 +186,7 @@ def calculate(ppeds):
                 val = a[1]()
             else:
                 val = vals[a[1]]
-            
+
     if not (val is None):
         prints += str(val) + " "
     prints = prints.strip()
