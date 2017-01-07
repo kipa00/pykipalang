@@ -61,8 +61,8 @@ def preprocess(analyzed):
     res = []
     op = 0
     opbase = 1024 # constant
-    varidx = 2
-    variables = ["e", "pi"]
+    varidx = 3
+    variables = ["e", "pi", "list"]
     r = []
     for x in analyzed:
         if x[0] == 0:
@@ -86,12 +86,17 @@ def preprocess(analyzed):
             elif x[1] == "print":
                 def temp_func(x):
                     global prints # better solutions?
-                    prints += str(x) + " "
+                    if isinstance(x, list):
+                        prints += "(" + ", ".join(map(lambda a:str(a), x)) + ") "
+                    else:
+                        prints += str(x) + " "
                     if buffer_size > 0 and len(prints) > buffer_size:
                         raise BufferOverflowError(prints[:buffer_size])
                 r.append((1, (temp_func, op+3)))
-            elif x[1] == "range":
+            elif x[1] == "in":
                 r.append((5, (0, op+2)))
+            elif x[1] == "range":
+                r.append((1, (lambda x:list(range(x)), op+10)))
             else:
                 try:
                     idx = variables.index(x[1])
@@ -119,6 +124,26 @@ def preprocess(analyzed):
                 op += opbase
             elif x[1] == ")":
                 op -= opbase
+            elif x[1] == "[":
+                if len(r) > 0:
+                    if r[-1][0] == 3:
+                        r.append((7, (0, op+11)))
+                    else:
+                        def temp_func3(x, y):
+                            if not isinstance(x, list):
+                                x = [x]
+                            try:
+                                return x[y]
+                            except IndexError as e:
+                                raise IndexError("목록의 색인이 범위 밖을 참조했습니다. (크기: %d, 참조됨: %d)" % (len(x), y))
+                            except TypeError as e:
+                                raise IndexError("목록의 색인 형이 잘못되었습니다.")
+                        r.append((2, (temp_func3, op+11)))
+                else:
+                    raise IndexError("배열 앞에서만 참조가 가능합니다.")
+                op += opbase
+            elif x[1] == "]":
+                op -= opbase
             elif x[1] == "=":
                 r.append((4, (0, op+4)))
             elif x[1] == ";":
@@ -128,6 +153,14 @@ def preprocess(analyzed):
                 r.append((2, (lambda x,y:1 if x==y else 0, op)))
             elif x[1] == "%":
                 r.append((2, (lambda x,y:x%y, op+7)))
+            elif x[1] == ",":
+                def temp_func2(x, y):
+                    if not isinstance(x, list):
+                        x = [x]
+                    if not isinstance(y, list):
+                        y = [y]
+                    return x + y
+                r.append((2, (temp_func2, op)))
             else:
                 raise NameError("연산자 %s는 정의되지 않았습니다." % x[1])
     if len(r) > 0:
@@ -137,6 +170,7 @@ def preprocess(analyzed):
 def calculate(ppeds):
     vals = [0 for i in range(ppeds[1])]
     vals[0],vals[1] = math.e,math.pi
+    vals[2] = []
     global prints
     prints = ""
     def no_method(p):
@@ -144,19 +178,26 @@ def calculate(ppeds):
             if x[0] != 0 and x[0] != 3:
                 return False
         return True
+    def to_value_func(p):
+        if p[0] == 0:
+            return p[1]
+        elif p[0] == 3:
+            return lambda x=p[1]: vals[x]
+        elif p[0] == 6:
+            return lambda x=p[1][0],y=p[1][1]: vals[x][y()] if isinstance(vals[x], list) else vals[x]
+        raise TypeError("연산자는 평가될 수 없습니다.")
+    is_value_type = lambda x:x[0]==0 or x[0]==3 or x[0]==6
     for pped in ppeds[0]:
         while not no_method(pped):
             idx = -1
             l = -1000000000000 # -inf
             for x in enumerate(pped):
-                if x[1][0] != 0 and x[1][0] != 3 and ((x[1][0] != 4 and x[1][1][1] > l) or (x[1][0] == 4 and x[1][1][1] >= l)):
+                if not is_value_type(x[1]) and ((x[1][0] != 4 and x[1][1][1] > l) or (x[1][0] == 4 and x[1][1][1] >= l)):
                     l = x[1][1][1]
                     idx = x[0]
             if pped[idx][0] == 1:
-                if pped[idx+1][0] == 0 or pped[idx+1][0] == 3:
-                    val = pped[idx+1][1]
-                    if pped[idx+1][0] == 3:
-                        val = lambda x=val:vals[x]
+                if is_value_type(pped[idx+1]):
+                    val = to_value_func(pped[idx+1])
                     pped = pped[:idx] + [(0, lambda f=pped[idx][1][0],x=val: f(x()))] + pped[idx+2:]
                 elif pped[idx+1][0] == 1:
                     func_a = pped[idx][1][0]
@@ -166,42 +207,43 @@ def calculate(ppeds):
                 else:
                     raise SyntaxError("단항 연산자에 이어 곧바로 이항 연산자가 등장할 수 없습니다.")
             elif pped[idx][0] == 2:
-                val_a,val_b = pped[idx-1][1],pped[idx+1][1]
-                if pped[idx-1][0] == 3:
-                    val_a = lambda x=val_a:vals[x]
-                if pped[idx+1][0] == 3:
-                    val_b = lambda x=val_b:vals[x]
+                val_a,val_b = to_value_func(pped[idx-1]),to_value_func(pped[idx+1])
                 pped = pped[:idx-1] + [(0, lambda func=pped[idx][1][0],x=val_a,y=val_b:func(x(), y()))] + pped[idx+2:]
             elif pped[idx][0] == 4:
                 if pped[idx-1][0] == 3:
-                    if pped[idx+1][0] == 0:
-                        val = pped[idx+1][1]
-                    elif pped[idx+1][0] == 3:
-                        val = lambda x=pped[idx+1][1]:vals[x]
-                    else:
-                        raise SyntaxError("대입 연산자의 사용이 잘못되었습니다.")
+                    val = to_value_func(pped[idx+1])
                     subidx = pped[idx-1][1]
                     def func(s=subidx, v=val):
                         vals[s] = v()
                         return vals[s]
                     pped = pped[:idx-1] + [(0, func)] + pped[idx+2:]
+                elif pped[idx-1][0] == 6:
+                    val = to_value_func(pped[idx+1])
+                    subidx = pped[idx-1][1]
+                    def func(s=subidx, v=val):
+                        idx = s[1]()
+                        vals[s[0]][idx] = v()
+                        return vals[s[0]][idx]
+                    pped = pped[:idx-1] + [(0, func)] + pped[idx+2:]
                 else:
                     raise SyntaxError("대입 연산자의 사용이 잘못되었습니다.")
             elif pped[idx][0] == 5:
-                if (pped[idx-2][0] == 0 or pped[idx-2][0] == 3) and pped[idx-1][0] == 3 and (pped[idx+1][0] == 0 or pped[idx+1][0] == 3):
-                    rangeto = pped[idx+1][1]
-                    if pped[idx+1][0] == 3:
-                        rangeto = lambda x=rangeto:vals[x]
-                    execfunc = pped[idx-2][1]
-                    if pped[idx-2][0] == 3:
-                        execfunc = lambda x=execfunc:vals[x]
+                if is_value_type(pped[idx-2]) and pped[idx-1][0] == 3 and is_value_type(pped[idx+1]):
+                    rangeto = to_value_func(pped[idx+1])
+                    execfunc = to_value_func(pped[idx-2])
                     def temp_func2(f, v, i):
-                        for j in range(i()):
+                        li = i()
+                        if not isinstance(li, list):
+                            li = [li]
+                        for j in li:
                             vals[v] = j
                             f()
                     pped = pped[:idx-2] + [(0, lambda func=execfunc,var=pped[idx-1][1],rto=rangeto:temp_func2(func, var, rto))] + pped[idx+2:]
                 else:
-                    raise SyntaxError("range 구문의 사용이 잘못되었습니다.")
+                    raise SyntaxError("in 구문의 사용이 잘못되었습니다.")
+            elif pped[idx][0] == 7:
+                val = to_value_func(pped[idx+1])
+                pped = pped[:idx-1] + [(6, (pped[idx-1][1], val))] + pped[idx+2:]
         if len(pped) > 0:
             a = pped[-1]
             if a[0] == 0:
@@ -239,4 +281,4 @@ def setTimeout(t=0):
     timeout_second = t
 
 if __name__ == "__main__":
-    print(evaluate("+-"))
+    print(evaluate("x = range(50); (x[i] = x[i] * x[i]) i in range(50); print(y) y in x;"))
