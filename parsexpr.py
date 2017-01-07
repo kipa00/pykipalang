@@ -15,6 +15,22 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 import math
+import signal
+
+buffer_size = 0
+timeout_second = 0
+
+class BufferOverflowError(Exception):
+    def __init__(self, msg):
+        self.msg = msg
+    def __str__(self):
+        return self.msg
+
+class TimeExpiredError(Exception):
+    def __init__(self, msg):
+        self.msg = msg
+    def __str__(self):
+        return self.msg
 
 def analyze_str(s):
     def character_set(c):
@@ -65,10 +81,14 @@ def preprocess(analyzed):
                 r.append((1, (math.exp, op+10)))
             elif x[1] == "log":
                 r.append((1, (math.log, op+10)))
+            elif x[1] == "pow":
+                r.append((1, (math.pow, op+8)))
             elif x[1] == "print":
                 def temp_func(x):
                     global prints # better solutions?
                     prints += str(x) + " "
+                    if buffer_size > 0 and len(prints) > buffer_size:
+                        raise BufferOverflowError(prints[:buffer_size])
                 r.append((1, (temp_func, op+3)))
             elif x[1] == "range":
                 r.append((5, (0, op+2)))
@@ -106,6 +126,8 @@ def preprocess(analyzed):
                 r = []
             elif x[1] == "==":
                 r.append((2, (lambda x,y:1 if x==y else 0, op)))
+            elif x[1] == "%":
+                r.append((2, (lambda x,y:x%y, op+7)))
             else:
                 raise NameError("연산자 %s는 정의되지 않았습니다." % x[1])
     if len(r) > 0:
@@ -168,7 +190,7 @@ def calculate(ppeds):
             elif pped[idx][0] == 5:
                 if (pped[idx-2][0] == 0 or pped[idx-2][0] == 3) and pped[idx-1][0] == 3 and (pped[idx+1][0] == 0 or pped[idx+1][0] == 3):
                     rangeto = pped[idx+1][1]
-                    if pped[idx+1][1] == 3:
+                    if pped[idx+1][0] == 3:
                         rangeto = lambda x=rangeto:vals[x]
                     execfunc = pped[idx-2][1]
                     if pped[idx-2][0] == 3:
@@ -195,7 +217,26 @@ def calculate(ppeds):
     return "프로그램이 정상적으로 종료되었습니다."
 
 def evaluate(s):
-    return calculate(preprocess(analyze_str(s)))
+    try:
+        if timeout_second > 0:
+            def timeout(signum, frame):
+                raise TimeExpiredError(prints)
+            signal.signal(signal.SIGALRM, timeout)
+            signal.alarm(timeout_second)
+        res = calculate(preprocess(analyze_str(s)))
+        signal.alarm(0)
+    except Exception as e:
+        signal.alarm(0)
+        raise e
+    return res
+
+def setBufferSize(l=0):
+    global buffer_size
+    buffer_size = l
+
+def setTimeout(t=0):
+    global timeout_second
+    timeout_second = t
 
 if __name__ == "__main__":
-    print(evaluate("(s = s + x * x) x range 5; print s"))
+    print(evaluate("+-"))
