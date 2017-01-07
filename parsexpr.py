@@ -14,6 +14,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+import sys
 import math
 import signal
 
@@ -61,8 +62,8 @@ def preprocess(analyzed):
     res = []
     op = 0
     opbase = 1024 # constant
-    varidx = 3
     variables = ["e", "pi", "list"]
+    varidx = len(variables)
     r = []
     for x in analyzed:
         if x[0] == 0:
@@ -82,21 +83,26 @@ def preprocess(analyzed):
             elif x[1] == "log":
                 r.append((1, (math.log, op+10)))
             elif x[1] == "pow":
-                r.append((1, (math.pow, op+8)))
+                r.append((2, (math.pow, op+8)))
             elif x[1] == "print":
                 def temp_func(x):
                     global prints # better solutions?
-                    if isinstance(x, list):
-                        prints += "(" + ", ".join(map(lambda a:str(a), x)) + ") "
-                    else:
-                        prints += str(x) + " "
+                    before_len = len(prints)
+                    def to_string(l):
+                        if isinstance(l, list):
+                            return "(" + ", ".join(map(to_string, l)) + ")"
+                        return str(l)
+                    prints += to_string(x) + " "
                     if buffer_size > 0 and len(prints) > buffer_size:
                         raise BufferOverflowError(prints[:buffer_size])
-                r.append((1, (temp_func, op+3)))
+                    return len(prints) - before_len
+                r.append((1, (temp_func, op+10)))
             elif x[1] == "in":
                 r.append((5, (0, op+2)))
             elif x[1] == "range":
                 r.append((1, (lambda x:list(range(x)), op+10)))
+            elif x[1] == "len":
+                r.append((1, (lambda x:len(x) if isinstance(x, list) else 1, op+10)))
             else:
                 try:
                     idx = variables.index(x[1])
@@ -119,7 +125,7 @@ def preprocess(analyzed):
             elif x[1] == "*" or x[1] == "×":
                 r.append((2, (lambda x,y:x*y, op+7)))
             elif x[1] == "/":
-                r.append((2, (lambda x,y:x/y, op+7)))
+                r.append((2, (lambda x,y:x//y if isinstance(x, int) and isinstance(x, int) else x/y, op+7)))
             elif x[1] == "(":
                 op += opbase
             elif x[1] == ")":
@@ -145,7 +151,10 @@ def preprocess(analyzed):
             elif x[1] == "]":
                 op -= opbase
             elif x[1] == "=":
-                r.append((4, (0, op+4)))
+                if len(r) > 0 and r[-1][0] == 2:
+                    r[-1] = (4, (r[-1][1][0], op+4))
+                else:
+                    r.append((4, (lambda x,y:y, op+4)))
             elif x[1] == ";":
                 res.append(r)
                 r = []
@@ -169,8 +178,7 @@ def preprocess(analyzed):
 
 def calculate(ppeds):
     vals = [0 for i in range(ppeds[1])]
-    vals[0],vals[1] = math.e,math.pi
-    vals[2] = []
+    vals[0],vals[1],vals[2] = math.e,math.pi,[]
     global prints
     prints = ""
     def no_method(p):
@@ -213,16 +221,16 @@ def calculate(ppeds):
                 if pped[idx-1][0] == 3:
                     val = to_value_func(pped[idx+1])
                     subidx = pped[idx-1][1]
-                    def func(s=subidx, v=val):
-                        vals[s] = v()
+                    def func(s=subidx, v=val, f=pped[idx][1][0]):
+                        vals[s] = f(vals[s], v())
                         return vals[s]
                     pped = pped[:idx-1] + [(0, func)] + pped[idx+2:]
                 elif pped[idx-1][0] == 6:
                     val = to_value_func(pped[idx+1])
                     subidx = pped[idx-1][1]
-                    def func(s=subidx, v=val):
+                    def func(s=subidx, v=val, f=pped[idx][1][0]):
                         idx = s[1]()
-                        vals[s[0]][idx] = v()
+                        vals[s[0]][idx] = f(vals[s[0]][idx], v())
                         return vals[s[0]][idx]
                     pped = pped[:idx-1] + [(0, func)] + pped[idx+2:]
                 else:
@@ -233,11 +241,13 @@ def calculate(ppeds):
                     execfunc = to_value_func(pped[idx-2])
                     def temp_func2(f, v, i):
                         li = i()
+                        res = []
                         if not isinstance(li, list):
                             li = [li]
                         for j in li:
                             vals[v] = j
-                            f()
+                            res.append(f())
+                        return res
                     pped = pped[:idx-2] + [(0, lambda func=execfunc,var=pped[idx-1][1],rto=rangeto:temp_func2(func, var, rto))] + pped[idx+2:]
                 else:
                     raise SyntaxError("in 구문의 사용이 잘못되었습니다.")
@@ -250,9 +260,6 @@ def calculate(ppeds):
                 val = a[1]()
             else:
                 val = vals[a[1]]
-
-    if not (val is None):
-        prints += str(val) + " "
     prints = prints.strip()
     if len(prints) > 0:
         return prints
@@ -281,4 +288,10 @@ def setTimeout(t=0):
     timeout_second = t
 
 if __name__ == "__main__":
-    print(evaluate("x = range(50); (x[i] = x[i] * x[i]) i in range(50); print(y) y in x;"))
+    while True:
+        try:
+            print(evaluate(input(">>> ")))
+        except KeyboardInterrupt:
+            break
+        except:
+            print("오류: %s" % sys.exc_info()[1])

@@ -2,7 +2,9 @@
 kipa's first well-constructed language starting from 3-day coding.
 
 ## installation
-Download parsexpr.py and put it to the path of your python program.
+Download parsexpr.py. You have 2 options:
+* Execute directly. This will run parsexpr.py as a shell.
+* Put it to the path of your python program. This allows you to preprocess the environment and postprocess the result.
 
 ## parsexpr.py documentation
 There are some functions you can use to interpret kipalang scripts.
