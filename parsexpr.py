@@ -34,6 +34,7 @@ class TimeExpiredError(Exception):
         return self.msg
 
 def analyze_str(s):
+    string = False
     def character_set(c):
         if c == ' ':
             return -1
@@ -47,19 +48,26 @@ def analyze_str(s):
     ts = ""
     for x in s:
         ty = character_set(x)
-        if (l != 2 and ty == l) or (l == 2 and ts[-1] == x and '+*='.find(x) != -1):
-            ts += x
+        if x == '"':
+            string = not string
+            if string:
+                ts = ""
+                l = 3
+        elif not string:
+            if (l != 2 and ty == l) or (l == 2 and ts[-1] == x and '+*='.find(x) != -1):
+                ts += x
+            else:
+                if l >= 0:
+                    r.append((l, ts))
+                l = ty
+                ts = x
         else:
-            if l >= 0:
-                r.append((l, ts))
-            l = ty
-            ts = x
+            ts += x
     if l >= 0:
         r.append((l, ts))
     return r
 
 def preprocess(analyzed):
-    res = []
     op = 0
     opbase = 1024 # constant
     variables = ["e", "pi", "list"]
@@ -95,12 +103,20 @@ def preprocess(analyzed):
                     prints += to_string(x) + " "
                     if buffer_size > 0 and len(prints) > buffer_size:
                         raise BufferOverflowError(prints[:buffer_size])
-                    return len(prints) - before_len
+                    return len(prints) - before_len - 1
                 r.append((1, (temp_func, op+10)))
+            elif x[1] == "putch":
+                def putch_func(x):
+                    global prints
+                    prints += chr(x)
+                    return x
+                r.append((1, (putch_func, op+10)))
             elif x[1] == "in":
                 r.append((5, (0, op+2)))
             elif x[1] == "range":
                 r.append((1, (lambda x:list(range(x)), op+10)))
+            elif x[1] == "while":
+                r.append((8, (0, op+2)))
             elif x[1] == "len":
                 r.append((1, (lambda x:len(x) if isinstance(x, list) else 1, op+10)))
             else:
@@ -156,10 +172,13 @@ def preprocess(analyzed):
                 else:
                     r.append((4, (lambda x,y:y, op+4)))
             elif x[1] == ";":
-                res.append(r)
-                r = []
+                r.append((2, (lambda x,y:y, op)))
             elif x[1] == "==":
-                r.append((2, (lambda x,y:1 if x==y else 0, op)))
+                r.append((2, (lambda x,y:1 if x==y else 0, op+5)))
+            elif x[1] == "<":
+                r.append((2, (lambda x,y:1 if x<y else 0, op+5)))
+            elif x[1] == ">":
+                r.append((2, (lambda x,y:1 if x>y else 0, op+5)))
             elif x[1] == "%":
                 r.append((2, (lambda x,y:x%y, op+7)))
             elif x[1] == ",":
@@ -172,9 +191,9 @@ def preprocess(analyzed):
                 r.append((2, (temp_func2, op)))
             else:
                 raise NameError("연산자 %s는 정의되지 않았습니다." % x[1])
-    if len(r) > 0:
-        res.append(r)
-    return (res, varidx)
+        elif x[0] == 3:
+            r.append((0, lambda x=list(map(ord, x[1])): x))
+    return (r, varidx)
 
 def calculate(ppeds):
     vals = [0 for i in range(ppeds[1])]
@@ -195,71 +214,76 @@ def calculate(ppeds):
             return lambda x=p[1][0],y=p[1][1]: vals[x][y()] if isinstance(vals[x], list) else vals[x]
         raise TypeError("연산자는 평가될 수 없습니다.")
     is_value_type = lambda x:x[0]==0 or x[0]==3 or x[0]==6
-    for pped in ppeds[0]:
-        while not no_method(pped):
-            idx = -1
-            l = -1000000000000 # -inf
-            for x in enumerate(pped):
-                if not is_value_type(x[1]) and ((x[1][0] != 4 and x[1][1][1] > l) or (x[1][0] == 4 and x[1][1][1] >= l)):
-                    l = x[1][1][1]
-                    idx = x[0]
-            if pped[idx][0] == 1:
-                if is_value_type(pped[idx+1]):
-                    val = to_value_func(pped[idx+1])
-                    pped = pped[:idx] + [(0, lambda f=pped[idx][1][0],x=val: f(x()))] + pped[idx+2:]
-                elif pped[idx+1][0] == 1:
-                    func_a = pped[idx][1][0]
-                    func_b = pped[idx+1][1][0]
-                    function = lambda a,func_a=func_a,func_b=func_b:func_a(func_b(a))
-                    pped = pped[:idx] + [(1, (function, max(pped[idx][1][1], pped[idx+1][1][1])))] + pped[idx+2:]
-                else:
-                    raise SyntaxError("단항 연산자에 이어 곧바로 이항 연산자가 등장할 수 없습니다.")
-            elif pped[idx][0] == 2:
-                val_a,val_b = to_value_func(pped[idx-1]),to_value_func(pped[idx+1])
-                pped = pped[:idx-1] + [(0, lambda func=pped[idx][1][0],x=val_a,y=val_b:func(x(), y()))] + pped[idx+2:]
-            elif pped[idx][0] == 4:
-                if pped[idx-1][0] == 3:
-                    val = to_value_func(pped[idx+1])
-                    subidx = pped[idx-1][1]
-                    def func(s=subidx, v=val, f=pped[idx][1][0]):
-                        vals[s] = f(vals[s], v())
-                        return vals[s]
-                    pped = pped[:idx-1] + [(0, func)] + pped[idx+2:]
-                elif pped[idx-1][0] == 6:
-                    val = to_value_func(pped[idx+1])
-                    subidx = pped[idx-1][1]
-                    def func(s=subidx, v=val, f=pped[idx][1][0]):
-                        idx = s[1]()
-                        vals[s[0]][idx] = f(vals[s[0]][idx], v())
-                        return vals[s[0]][idx]
-                    pped = pped[:idx-1] + [(0, func)] + pped[idx+2:]
-                else:
-                    raise SyntaxError("대입 연산자의 사용이 잘못되었습니다.")
-            elif pped[idx][0] == 5:
-                if is_value_type(pped[idx-2]) and pped[idx-1][0] == 3 and is_value_type(pped[idx+1]):
-                    rangeto = to_value_func(pped[idx+1])
-                    execfunc = to_value_func(pped[idx-2])
-                    def temp_func2(f, v, i):
-                        li = i()
-                        res = []
-                        if not isinstance(li, list):
-                            li = [li]
-                        for j in li:
-                            vals[v] = j
-                            res.append(f())
-                        return res
-                    pped = pped[:idx-2] + [(0, lambda func=execfunc,var=pped[idx-1][1],rto=rangeto:temp_func2(func, var, rto))] + pped[idx+2:]
-                else:
-                    raise SyntaxError("in 구문의 사용이 잘못되었습니다.")
-            elif pped[idx][0] == 7:
+    pped = ppeds[0]
+    while not no_method(pped):
+        idx = -1
+        l = -1000000000000 # -inf
+        for x in enumerate(pped):
+            if not is_value_type(x[1]) and ((x[1][0] != 4 and x[1][1][1] > l) or (x[1][0] == 4 and x[1][1][1] >= l)):
+                l = x[1][1][1]
+                idx = x[0]
+        if pped[idx][0] == 1:
+            if is_value_type(pped[idx+1]):
                 val = to_value_func(pped[idx+1])
-                pped = pped[:idx-1] + [(6, (pped[idx-1][1], val))] + pped[idx+2:]
-        if len(pped) > 0:
-            a = pped[-1]
-            if a[0] == 0:
-                val = a[1]()
+                pped = pped[:idx] + [(0, lambda f=pped[idx][1][0],x=val: f(x()))] + pped[idx+2:]
+            elif pped[idx+1][0] == 1:
+                func_a = pped[idx][1][0]
+                func_b = pped[idx+1][1][0]
+                function = lambda a,func_a=func_a,func_b=func_b:func_a(func_b(a))
+                pped = pped[:idx] + [(1, (function, max(pped[idx][1][1], pped[idx+1][1][1])))] + pped[idx+2:]
             else:
-                val = vals[a[1]]
+                raise SyntaxError("단항 연산자에 이어 곧바로 이항 연산자가 등장할 수 없습니다.")
+        elif pped[idx][0] == 2:
+            val_a,val_b = to_value_func(pped[idx-1]),to_value_func(pped[idx+1])
+            pped = pped[:idx-1] + [(0, lambda func=pped[idx][1][0],x=val_a,y=val_b:func(x(), y()))] + pped[idx+2:]
+        elif pped[idx][0] == 4:
+            if pped[idx-1][0] == 3:
+                val = to_value_func(pped[idx+1])
+                subidx = pped[idx-1][1]
+                def func(s=subidx, v=val, f=pped[idx][1][0]):
+                    vals[s] = f(vals[s], v())
+                    return vals[s]
+                pped = pped[:idx-1] + [(0, func)] + pped[idx+2:]
+            elif pped[idx-1][0] == 6:
+                val = to_value_func(pped[idx+1])
+                subidx = pped[idx-1][1]
+                def func(s=subidx, v=val, f=pped[idx][1][0]):
+                    idx = s[1]()
+                    vals[s[0]][idx] = f(vals[s[0]][idx], v())
+                    return vals[s[0]][idx]
+                pped = pped[:idx-1] + [(0, func)] + pped[idx+2:]
+            else:
+                raise SyntaxError("대입 연산자의 사용이 잘못되었습니다.")
+        elif pped[idx][0] == 5:
+            if is_value_type(pped[idx-2]) and pped[idx-1][0] == 3 and is_value_type(pped[idx+1]):
+                rangeto = to_value_func(pped[idx+1])
+                execfunc = to_value_func(pped[idx-2])
+                def temp_func2(f, v, i):
+                    li = i()
+                    res = []
+                    if not isinstance(li, list):
+                        li = [li]
+                    for j in li:
+                        vals[v] = j
+                        res.append(f())
+                    return res
+                pped = pped[:idx-2] + [(0, lambda func=execfunc,var=pped[idx-1][1],rto=rangeto:temp_func2(func, var, rto))] + pped[idx+2:]
+            else:
+                raise SyntaxError("in 구문의 사용이 잘못되었습니다.")
+        elif pped[idx][0] == 7:
+            val = to_value_func(pped[idx+1])
+            pped = pped[:idx-1] + [(6, (pped[idx-1][1], val))] + pped[idx+2:]
+        elif pped[idx][0] == 8:
+            def temp_func3(x, y):
+                while y():
+                    x()
+            pped = pped[:idx-1] + [(0, lambda x=to_value_func(pped[idx-1]),y=to_value_func(pped[idx+1]):temp_func3(x,y))] + pped[idx+2:]
+    if len(pped) > 0:
+        a = pped[-1]
+        if a[0] == 0:
+            val = a[1]()
+        else:
+            val = vals[a[1]]
     prints = prints.strip()
     if len(prints) > 0:
         return prints
@@ -286,6 +310,8 @@ def setBufferSize(l=0):
 def setTimeout(t=0):
     global timeout_second
     timeout_second = t
+
+setTimeout(5)
 
 if __name__ == "__main__":
     while True:
