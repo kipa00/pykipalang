@@ -49,10 +49,14 @@ def analyze_str(s):
     for x in s:
         ty = character_set(x)
         if x == '"':
+            if l >= 0:
+                r.append((l, ts))
             string = not string
             if string:
                 ts = ""
                 l = 3
+            else:
+                l = -1
         elif not string:
             if (l != 2 and ty == l) or (l == 2 and ts[-1] == x and '+*='.find(x) != -1):
                 ts += x
