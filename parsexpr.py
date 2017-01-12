@@ -111,11 +111,13 @@ def preprocess(analyzed):
                 r.append((1, (temp_func, op+10)))
             elif x[1] == "putch":
                 def putch_func(x):
-                    global prints
+                    global prints # better solutions?
                     if isinstance(x, list):
                         prints += "".join(map(chr, x))
                         return x[-1] if len(x) > 0 else None
                     prints += chr(x)
+                    if buffer_size > 0 and len(prints) > buffer_size:
+                        raise BufferOverflowError(prints[:buffer_size])
                     return x
                 r.append((1, (putch_func, op+10)))
             elif x[1] == "in":
