@@ -114,8 +114,9 @@ def preprocess(analyzed):
                     global prints # better solutions?
                     if isinstance(x, list):
                         prints += "".join(map(chr, x))
-                        return x[-1] if len(x) > 0 else None
-                    prints += chr(x)
+                        x = x[-1] if len(x) > 0 else None
+                    else:
+                        prints += chr(x)
                     if buffer_size > 0 and len(prints) > buffer_size:
                         raise BufferOverflowError(prints[:buffer_size])
                     return x
@@ -320,7 +321,7 @@ def setTimeout(t=0):
     global timeout_second
     timeout_second = t
 
-setTimeout(5)
+setBufferSize(444)
 
 if __name__ == "__main__":
     while True:
