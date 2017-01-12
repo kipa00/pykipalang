@@ -112,13 +112,16 @@ def preprocess(analyzed):
             elif x[1] == "putch":
                 def putch_func(x):
                     global prints
+                    if isinstance(x, list):
+                        prints += "".join(map(chr, x))
+                        return x[-1] if len(x) > 0 else None
                     prints += chr(x)
                     return x
                 r.append((1, (putch_func, op+10)))
             elif x[1] == "in":
                 r.append((5, (0, op+2)))
             elif x[1] == "range":
-                r.append((1, (lambda x:list(range(x)), op+10)))
+                r.append((1, (lambda x:list(range(x))if not isinstance(x,list)else(list(range(x[0],x[0]+x[1]))if len(x)==2 else list(range(x[0],x[0]+x[1]*x[2],x[2]))), op+10)))
             elif x[1] == "while":
                 r.append((8, (0, op+2)))
             elif x[1] == "len":
